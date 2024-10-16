@@ -8,13 +8,14 @@
 #include <errno.h>
 
 #define MAX_BUFFER 1024
-#define XOR_KEY 0x7A
+#define XOR_KEY "XorKey2024" // Longer key for better encryption
 #define SERVER_TIMEOUT 10  // Timeout for server response in seconds
 #define MAX_RETRIES 3      // Maximum number of retries for sending a message
 
-void xor_cipher(char *data, char key) {
-    for (int i = 0; data[i] != '\0'; i++) {
-        data[i] ^= key;
+void xor_cipher(char *data, size_t data_len, const char *key) {
+    size_t key_len = strlen(key);
+    for (size_t i = 0; i < data_len; i++) {
+        data[i] ^= key[i % key_len];
     }
 }
 
@@ -106,10 +107,11 @@ int main() {
                     break;
                 }
                 
-                strcpy(buffer, input);
-                xor_cipher(buffer, XOR_KEY);
+                size_t input_len = strlen(input);
+                memcpy(buffer, input, input_len);
+                xor_cipher(buffer, input_len, XOR_KEY);
                 
-                if (send_with_timeout(client_socket, buffer, strlen(buffer), 0,
+                if (send_with_timeout(client_socket, buffer, input_len, 0,
                                       (struct sockaddr*)&server_addr, sizeof(server_addr), 5) < 0) {
                     printf("Failed to send message after multiple attempts.\n");
                     continue;
@@ -122,9 +124,8 @@ int main() {
             int bytes_received = recvfrom(client_socket, buffer, MAX_BUFFER, 0, NULL, NULL);
             
             if (bytes_received > 0) {
-                buffer[bytes_received] = '\0';
-                
-                xor_cipher(buffer, XOR_KEY);
+                xor_cipher(buffer, bytes_received, XOR_KEY);
+                buffer[bytes_received] = '\0'; // Null-terminate after decryption
                 printf("Server response: %s\n", buffer);
             }
             else if (bytes_received < 0) {

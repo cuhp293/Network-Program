@@ -8,11 +8,12 @@
 
 #define MAX_BUFFER 1024
 #define MAX_CLIENTS 10
-#define XOR_KEY 0x7A
+#define XOR_KEY "XorKey2024" // Longer key for better encryption
 
-void xor_cipher(char *data, char key) {
-    for (int i = 0; data[i] != '\0'; i++) {
-        data[i] ^= key;
+void xor_cipher(char *data, size_t data_len, const char *key) {
+    size_t key_len = strlen(key);
+    for (size_t i = 0; i < data_len; i++) {
+        data[i] ^= key[i % key_len];
     }
 }
 
@@ -81,7 +82,9 @@ int main() {
                                   (struct sockaddr*)&client_addr, &client_len);
             
             if (recv_len > 0) {
-                buffer[recv_len] = '\0';
+                // Decrypt the received message
+                xor_cipher(buffer, recv_len, XOR_KEY);
+                buffer[recv_len] = '\0'; // Null-terminate after decryption
                 
                 // Find or add a new client
                 int client_index = -1;
@@ -105,20 +108,18 @@ int main() {
                 }
                 
                 if (client_index >= 0) {
-                    // Decrypt the received message
-                    xor_cipher(buffer, XOR_KEY);
                     printf("Received from client %d: %s\n", clients[client_index].id, buffer);
                     
                     // Prepare response
                     char response[MAX_BUFFER];
-                    snprintf(response, MAX_BUFFER, "Client %d sent: %s", 
+                    int response_len = snprintf(response, MAX_BUFFER, "Client %d sent: %s", 
                             clients[client_index].id, buffer);
                     
                     // Encrypt the response
-                    xor_cipher(response, XOR_KEY);
+                    xor_cipher(response, response_len, XOR_KEY);
                     
                     // Use sendto to send the response to the specific client
-                    if (sendto(server_socket, response, strlen(response), 0,
+                    if (sendto(server_socket, response, response_len, 0,
                              (struct sockaddr*)&client_addr, sizeof(client_addr)) < 0) {
                         perror("Send failed");
                     }
