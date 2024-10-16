@@ -5,14 +5,51 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <errno.h>
 
 #define MAX_BUFFER 1024
 #define XOR_KEY 0x7A
+#define SERVER_TIMEOUT 10  // Timeout for server response in seconds
+#define MAX_RETRIES 3      // Maximum number of retries for sending a message
 
 void xor_cipher(char *data, char key) {
     for (int i = 0; data[i] != '\0'; i++) {
         data[i] ^= key;
     }
+}
+
+int send_with_timeout(int sock, const char *msg, size_t len, int flags, 
+                      struct sockaddr *dest_addr, socklen_t addrlen, int timeout_sec) {
+    fd_set writefds;
+    struct timeval tv;
+    int retries = 0;
+
+    while (retries < MAX_RETRIES) {
+        FD_ZERO(&writefds);
+        FD_SET(sock, &writefds);
+
+        tv.tv_sec = timeout_sec;
+        tv.tv_usec = 0;
+
+        int ready = select(sock + 1, NULL, &writefds, NULL, &tv);
+
+        if (ready == -1) {
+            if (errno == EINTR) continue;  // Interrupted, try again
+            perror("select() error");
+            return -1;
+        } else if (ready == 0) {
+            printf("Send timeout occurred. Retrying... (%d/%d)\n", retries + 1, MAX_RETRIES);
+            retries++;
+            continue;
+        }
+
+        if (FD_ISSET(sock, &writefds)) {
+            return sendto(sock, msg, len, flags, dest_addr, addrlen);
+        }
+    }
+
+    printf("Max retries reached. Message not sent.\n");
+    return -1;
 }
 
 int main() {
@@ -34,12 +71,6 @@ int main() {
     server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     server_addr.sin_port = htons(8888);
     
-    // Connect to server
-    if (connect(client_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Connection failed");
-        exit(1);
-    }
-    
     printf("Connected to server. Type your messages (type 'exit' to quit):\n");
     
     while (1) {
@@ -50,48 +81,49 @@ int main() {
         
         int max_fd = (client_socket > STDIN_FILENO) ? client_socket : STDIN_FILENO;
         
-        // Select will wait until there is data from the server or from the keyboard
-        int activity = select(max_fd + 1, &readfds, NULL, NULL, NULL);
+        struct timeval tv;
+        tv.tv_sec = SERVER_TIMEOUT;
+        tv.tv_usec = 0;
+
+        int activity = select(max_fd + 1, &readfds, NULL, NULL, &tv);
         
         if (activity < 0) {
             perror("Select error");
             continue;
         }
         
-        // Check if there is input from the keyboard
+        if (activity == 0) {
+            printf("No activity for %d seconds. Server might be unresponsive.\n", SERVER_TIMEOUT);
+            continue;
+        }
+        
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
             if (fgets(input, MAX_BUFFER, stdin) != NULL) {
-                // Remove newline character at the end
                 input[strcspn(input, "\n")] = 0;
                 
-                // Check if the user wants to exit
                 if (strcmp(input, "exit") == 0) {
-                    printf("Closing connection...\n");
+                    printf("Closing...\n");
                     break;
                 }
                 
-                // Encrypt the message before sending
                 strcpy(buffer, input);
                 xor_cipher(buffer, XOR_KEY);
                 
-                // Use send() since we have already connected
-                if (send(client_socket, buffer, strlen(buffer), 0) < 0) {
-                    perror("Send failed");
+                if (send_with_timeout(client_socket, buffer, strlen(buffer), 0,
+                                      (struct sockaddr*)&server_addr, sizeof(server_addr), 5) < 0) {
+                    printf("Failed to send message after multiple attempts.\n");
                     continue;
                 }
                 printf("Sent encrypted message to server\n");
             }
         }
         
-        // Check if there is data from the server
         if (FD_ISSET(client_socket, &readfds)) {
-            // Use recv() since we have already connected
-            int bytes_received = recv(client_socket, buffer, MAX_BUFFER, 0);
+            int bytes_received = recvfrom(client_socket, buffer, MAX_BUFFER, 0, NULL, NULL);
             
             if (bytes_received > 0) {
                 buffer[bytes_received] = '\0';
                 
-                // Decrypt and display the message
                 xor_cipher(buffer, XOR_KEY);
                 printf("Server response: %s\n", buffer);
             }
