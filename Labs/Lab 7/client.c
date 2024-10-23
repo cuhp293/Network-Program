@@ -12,7 +12,13 @@ void print_board(int game_board[3][3]) {
     printf("Current game board:\n");
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < 3; j++) {
-            printf("%d ", game_board[i][j]);
+            char symbol = '.';  // Empty cell
+            if (game_board[i][j] == 1) {
+                symbol = 'x';   // Player 1
+            } else if (game_board[i][j] == 2) {
+                symbol = 'o';   // Player 2
+            }
+            printf("%c ", symbol);
         }
         printf("\n");
     }
